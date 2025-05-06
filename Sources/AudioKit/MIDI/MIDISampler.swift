@@ -42,17 +42,24 @@ open class MIDISampler: AppleSampler, NamedNode {
         guard let midiBlock = avAudioNode.auAudioUnit.scheduleMIDIEventBlock else {
             fatalError("Expected AU to respond to MIDI.")
         }
+
         CheckError(MIDIDestinationCreateWithBlock(midiClient, cfName, &midiIn) { packetList, _ in
+            // Begin bij een pointer naar de eerste MIDIPacket
             withUnsafePointer(to: packetList.pointee.packet) { packetPtr in
-                var p = packetPtr
-                for _ in 1...packetList.pointee.numPackets {
-                    for event in p.pointee {
-                        event.data.withUnsafeBufferPointer { ptr in
-                            guard let ptr = ptr.baseAddress else { return }
-                            midiBlock(AUEventSampleTimeImmediate, 0, event.data.count, ptr)
-                        }
+                var currentPacketPtr = UnsafeMutableRawPointer(mutating: packetPtr).assumingMemoryBound(to: MIDIPacket.self)
+
+                for _ in 0..<packetList.pointee.numPackets {
+                    let data = withUnsafeBytes(of: currentPacketPtr.pointee.data) {
+                        Array($0.prefix(Int(currentPacketPtr.pointee.length)))
                     }
-                    p = UnsafePointer<MIDIPacket>(MIDIPacketNext(p))
+
+                    data.withUnsafeBufferPointer { buffer in
+                        guard let baseAddress = buffer.baseAddress else { return }
+                        midiBlock(AUEventSampleTimeImmediate, 0, buffer.count, baseAddress)
+                    }
+
+                    // Correcte manier om naar volgende packet te gaan
+                    currentPacketPtr = MIDIPacketNext(currentPacketPtr)
                 }
             }
         })
